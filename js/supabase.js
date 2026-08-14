@@ -3,15 +3,16 @@ let sbPromise;
 async function getSupabase(){
   if(sbPromise)return sbPromise;
   sbPromise=new Promise((resolve,reject)=>{
-    const finish=()=>{try{const c=window.ZAYAVLENIYA_SUPABASE||{};if(!c.url||!c.anonKey)return reject(new Error('SUPABASE_CONFIG_MISSING'));resolve(window.supabase.createClient(c.url,c.anonKey));}catch(e){reject(e)}};
+    const finish=()=>{try{const c=window.ZAYAVLENIYA_SUPABASE||{};if(!c.url||!c.anonKey)return reject(new Error('SUPABASE_CONFIG_MISSING'));resolve(window.supabase.createClient(c.url,c.anonKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}}));}catch(e){reject(e)}};
     if(window.supabase)return finish();
     const s=document.createElement('script');s.src=SUPABASE_CDN;s.onload=finish;s.onerror=()=>reject(new Error('SUPABASE_CDN_ERROR'));document.head.appendChild(s);
   });
   return sbPromise;
 }
-async function currentUser(){const db=await getSupabase();const {data,error}=await db.auth.getUser();if(error)throw error;return data.user||null}
+async function currentSession(){const db=await getSupabase();const {data,error}=await db.auth.getSession();if(error)throw error;return data.session||null}
+async function currentUser(){const session=await currentSession();return session?.user||null}
 async function currentProfile(){const u=await currentUser();if(!u)return null;const db=await getSupabase();const {data,error}=await db.from('profiles').select('*').eq('id',u.id).maybeSingle();if(error)throw error;return data}
-async function requireAuth(){try{const u=await currentUser();if(!u){location.replace('login.html');return null}return u}catch(e){console.error(e);alert('Не удалось подключиться к системе.');return null}}
+async function requireAuth(){const session=await currentSession();if(!session){location.replace('login.html');return null}return session.user}
 async function requireCitizen(){const u=await requireAuth();if(!u)return null;const p=await currentProfile();if(!p){await signOut();return null}if(p.role==='admin'){location.replace('admin.html');return null}return p}
 async function requireAdmin(){const u=await requireAuth();if(!u)return null;const p=await currentProfile();if(!p){await signOut();return null}if(p.role!=='admin'){location.replace('dashboard.html');return null}return p}
 async function signOut(){const db=await getSupabase();await db.auth.signOut();location.replace('login.html')}
@@ -26,4 +27,4 @@ async function adminReceive(id,gameDay){const db=await getSupabase();const {erro
 async function adminStartReview(id,gameDay){const db=await getSupabase();const {error}=await db.rpc('start_application_review',{p_application_id:id,p_game_day:validGameDay(gameDay)});if(error)throw error}
 async function adminDecision(id,status,comment,gameDay){const db=await getSupabase();const {error}=await db.rpc('application_decision',{p_application_id:id,p_status:status,p_comment:comment||'',p_game_day:validGameDay(gameDay)});if(error)throw error}
 async function createAppeal(id,reason){const db=await getSupabase();const {data,error}=await db.rpc('create_appeal',{p_application_id:id,p_reason:reason});if(error)throw error;return data}
-window.ZB={getSupabase,currentUser,currentProfile,requireAuth,requireCitizen,requireAdmin,signOut,signIn,submitApplication,listMyApplications,listApplicationsAdmin,getApplication,getHistory,adminReceive,adminStartReview,adminDecision,createAppeal};
+window.ZB={getSupabase,currentSession,currentUser,currentProfile,requireAuth,requireCitizen,requireAdmin,signOut,signIn,submitApplication,listMyApplications,listApplicationsAdmin,getApplication,getHistory,adminReceive,adminStartReview,adminDecision,createAppeal};
