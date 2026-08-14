@@ -1,11 +1,20 @@
 const SUPABASE_CDN='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
 let sbPromise;
-async function getSupabase(){if(sbPromise)return sbPromise;sbPromise=new Promise((resolve,reject)=>{const finish=()=>{try{const c=window.ZAYAVLENIYA_SUPABASE||{};if(!c.url||!c.anonKey)return reject(new Error('SUPABASE_CONFIG_MISSING'));resolve(window.supabase.createClient(c.url,c.anonKey));}catch(e){reject(e)}};if(window.supabase)return finish();const s=document.createElement('script');s.src=SUPABASE_CDN;s.onload=finish;s.onerror=()=>reject(new Error('SUPABASE_CDN_ERROR'));document.head.appendChild(s)});return sbPromise}
-async function currentUser(){const db=await getSupabase();const {data}=await db.auth.getUser();return data.user||null}
-async function currentProfile(){const u=await currentUser();if(!u)return null;const db=await getSupabase();const {data,error}=await db.from('profiles').select('*').eq('id',u.id).single();if(error)throw error;return data}
-async function requireAuth(){try{const u=await currentUser();if(!u){location.href='login.html';return null}return u}catch(e){console.error(e);alert('Не удалось подключиться к системе. Проверьте настройки Supabase.');return null}}
-async function requireAdmin(){const u=await requireAuth();if(!u)return null;const p=await currentProfile();if(p?.role!=='admin'){location.href='dashboard.html';return null}return p}
-async function signOut(){const db=await getSupabase();await db.auth.signOut();location.href='index.html'}
+async function getSupabase(){
+  if(sbPromise)return sbPromise;
+  sbPromise=new Promise((resolve,reject)=>{
+    const finish=()=>{try{const c=window.ZAYAVLENIYA_SUPABASE||{};if(!c.url||!c.anonKey)return reject(new Error('SUPABASE_CONFIG_MISSING'));resolve(window.supabase.createClient(c.url,c.anonKey));}catch(e){reject(e)}};
+    if(window.supabase)return finish();
+    const s=document.createElement('script');s.src=SUPABASE_CDN;s.onload=finish;s.onerror=()=>reject(new Error('SUPABASE_CDN_ERROR'));document.head.appendChild(s);
+  });
+  return sbPromise;
+}
+async function currentUser(){const db=await getSupabase();const {data,error}=await db.auth.getUser();if(error)throw error;return data.user||null}
+async function currentProfile(){const u=await currentUser();if(!u)return null;const db=await getSupabase();const {data,error}=await db.from('profiles').select('*').eq('id',u.id).maybeSingle();if(error)throw error;return data}
+async function requireAuth(){try{const u=await currentUser();if(!u){location.replace('login.html');return null}return u}catch(e){console.error(e);alert('Не удалось подключиться к системе.');return null}}
+async function requireCitizen(){const u=await requireAuth();if(!u)return null;const p=await currentProfile();if(!p){await signOut();return null}if(p.role==='admin'){location.replace('admin.html');return null}return p}
+async function requireAdmin(){const u=await requireAuth();if(!u)return null;const p=await currentProfile();if(!p){await signOut();return null}if(p.role!=='admin'){location.replace('dashboard.html');return null}return p}
+async function signOut(){const db=await getSupabase();await db.auth.signOut();location.replace('login.html')}
 async function signIn(email,password){const db=await getSupabase();return db.auth.signInWithPassword({email,password})}
 function validGameDay(d){const n=Number(d);if(!Number.isInteger(n)||n<0)throw new Error('Игровой день должен быть целым числом от 0 и выше.');return n}
 async function submitApplication(type,title,destination,formData,documentText,gameDay){const db=await getSupabase();const d=validGameDay(gameDay);const {data,error}=await db.rpc('submit_application',{p_type:type,p_title:title,p_destination:destination,p_form_data:formData||{},p_generated_document:documentText||'',p_game_day:d});if(error)throw error;return data}
@@ -17,4 +26,4 @@ async function adminReceive(id,gameDay){const db=await getSupabase();const {erro
 async function adminStartReview(id,gameDay){const db=await getSupabase();const {error}=await db.rpc('start_application_review',{p_application_id:id,p_game_day:validGameDay(gameDay)});if(error)throw error}
 async function adminDecision(id,status,comment,gameDay){const db=await getSupabase();const {error}=await db.rpc('application_decision',{p_application_id:id,p_status:status,p_comment:comment||'',p_game_day:validGameDay(gameDay)});if(error)throw error}
 async function createAppeal(id,reason){const db=await getSupabase();const {data,error}=await db.rpc('create_appeal',{p_application_id:id,p_reason:reason});if(error)throw error;return data}
-window.ZB={getSupabase,currentUser,currentProfile,requireAuth,requireAdmin,signOut,signIn,submitApplication,listMyApplications,listApplicationsAdmin,getApplication,getHistory,adminReceive,adminStartReview,adminDecision,createAppeal};
+window.ZB={getSupabase,currentUser,currentProfile,requireAuth,requireCitizen,requireAdmin,signOut,signIn,submitApplication,listMyApplications,listApplicationsAdmin,getApplication,getHistory,adminReceive,adminStartReview,adminDecision,createAppeal};
