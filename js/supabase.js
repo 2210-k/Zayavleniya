@@ -1,1 +1,365 @@
-const SUPABASE_CDN='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';let sbPromise;async function getSupabase(){if(sbPromise)return sbPromise;sbPromise=new Promise((resolve,reject)=>{const finish=()=>{try{const c=window.ZAYAVLENIYA_SUPABASE||{};if(!c.url||!c.anonKey)return reject(new Error('SUPABASE_CONFIG_MISSING'));resolve(window.supabase.createClient(c.url,c.anonKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,flowType:'pkce'}))}catch(e){reject(e)}};if(window.supabase)return finish();const s=document.createElement('script');s.src=SUPABASE_CDN;s.onload=finish;s.onerror=()=>reject(new Error('SUPABASE_CDN_ERROR'));document.head.appendChild(s)});return sbPromise}async function currentSession(){const db=await getSupabase();const {data,error}=await db.auth.getSession();if(error)throw error;return data.session||null}async function currentUser(){return(await currentSession())?.user||null}async function currentProfile(){const u=await currentUser();if(!u)return null;const {data,error}=await(await getSupabase()).from('profiles').select('*').eq('id',u.id).maybeSingle();if(error)throw error;return data}async function requireAuth(){const s=await currentSession();if(!s){location.replace('login.html');return null}return s.user}async function requireCitizen(){const u=await requireAuth();if(!u)return null;const p=await currentProfile();if(!p){await signOut();return null}if(p.role==='admin'){location.replace('admin.html');return null}return p}async function requireAdmin(){const u=await requireAuth();if(!u)return null;const p=await currentProfile();if(!p){await signOut();return null}if(p.role!=='admin'){location.replace('dashboard.html');return null}return p}async function signOut(){await(await getSupabase()).auth.signOut({scope:'local'});location.replace('login.html')}async function signIn(email,password){return(await getSupabase()).auth.signInWithPassword({email,password})}function validGameDay(d){const n=Number(d);if(!Number.isInteger(n)||n<0)throw Error('Игровой день должен быть целым числом от 0 и выше.');return n}async function submitApplication(type,title,destination,formData,documentText,gameDay){const {data,error}=await(await getSupabase()).rpc('submit_application',{p_type:type,p_title:title,p_destination:destination,p_form_data:formData||{},p_generated_document:documentText||'',p_game_day:validGameDay(gameDay)});if(error)throw error;return data}async function listMyApplications(){const u=await currentUser();if(!u)throw Error('Требуется вход.');const {data,error}=await(await getSupabase()).from('applications').select('*').eq('citizen_id',u.id).order('created_at',{ascending:false});if(error)throw error;return data||[]}async function listApplicationsAdmin(){const {data,error}=await(await getSupabase()).from('applications').select('*, profiles:citizen_id(id,full_name,passport_series,passport_number,birth_date,citizenship,birth_place,nationality,residence_address,registration_address,passport_issuer,passport_issue_date)').order('created_at',{ascending:false});if(error)throw error;return data||[]}async function getApplication(id){if(!id)throw Error('Не указан номер заявления.');const u=await currentUser();if(!u)throw Error('Требуется вход.');const {data,error}=await(await getSupabase()).from('applications').select('*, profiles:citizen_id(*)').eq('id',id).eq('citizen_id',u.id).single();if(error)throw error;return data}async function getApplicationAdmin(id){if(!id)throw Error('Не указан номер заявления.');const p=await currentProfile();if(!p||p.role!=='admin')throw Error('Доступ администратора требуется.');const {data,error}=await(await getSupabase()).from('applications').select('*, profiles:citizen_id(*)').eq('id',id).single();if(error)throw error;return data}async function getHistory(id){const {data,error}=await(await getSupabase()).from('application_history').select('*').eq('application_id',id).order('created_at');if(error)throw error;return data||[]}async function rpc(name,args){const {error}=await(await getSupabase()).rpc(name,args);if(error)throw error}async function adminReceive(id,d){return rpc('receive_application',{p_application_id:id,p_game_day:validGameDay(d)})}async function adminStartReview(id,d){return rpc('start_application_review',{p_application_id:id,p_game_day:validGameDay(d)})}async function adminDecision(id,status,comment,d){return rpc('application_decision',{p_application_id:id,p_status:status,p_comment:comment||'',p_game_day:validGameDay(d)})}async function decideApplication(id,status,d,comment){return adminDecision(id,status,comment,d)}async function createAppeal(id,reason){const {data,error}=await(await getSupabase()).rpc('create_appeal',{p_application_id:id,p_reason:String(reason||'').trim()});if(error)throw error;return data}async function listAppealsAdmin(){const {data,error}=await(await getSupabase()).rpc('list_appeals_admin');if(error)throw error;return data||[]}async function resolveAppealAdmin(id,status,comment,d){return rpc('resolve_appeal_admin',{p_appeal_id:id,p_status:status,p_comment:comment||'',p_game_day:validGameDay(d)})}async function listMessages(id){const {data,error}=await(await getSupabase()).rpc('list_application_messages',{p_application_id:id});if(error)throw error;return data||[]}async function sendMessage(id,message){const text=String(message||'').trim();if(!text)throw Error('Сообщение не может быть пустым.');if(text.length>4000)throw Error('Сообщение слишком длинное.');const {data,error}=await(await getSupabase()).rpc('send_application_message',{p_application_id:id,p_message:text});if(error)throw error;return data}async function markApplicationMessagesRead(id){if(!id)return null;const {data,error}=await(await getSupabase()).rpc('mark_application_messages_read',{p_application_id:id});if(error)throw error;return data}async function getUnreadMessageCount(){const u=await currentUser();if(!u)return 0;const {count,error}=await(await getSupabase()).from('messages').select('id',{count:'exact',head:true}).eq('recipient_id',u.id).eq('is_read',false);if(error)throw error;return count||0}async function deleteOwnMessage(id){return rpc('delete_own_message',{p_message_id:id})}async function deleteApplication(id){return rpc('delete_application_admin',{p_application_id:id})}async function deleteMessage(id){return rpc('delete_message_admin',{p_message_id:id})}async function clearHistory(id){return rpc('clear_application_history_admin',{p_application_id:id})}async function clearMessages(id){return rpc('clear_application_messages_admin',{p_application_id:id})}async function listAttachments(id){const {data,error}=await(await getSupabase()).from('application_attachments').select('*').eq('application_id',id).order('created_at');if(error)throw error;return data||[]}async function uploadAttachment(applicationId,file){if(!file)throw Error('Файл не выбран.');const u=await currentUser();if(!u)throw Error('Требуется вход.');const safe=file.name.replace(/[^a-zA-Z0-9._-а-яА-ЯёЁ]/g,'_');const path=u.id+'/'+applicationId+'/'+Date.now()+'_'+safe;const db=await getSupabase();const r=await db.storage.from('application-attachments').upload(path,file,{upsert:false,contentType:file.type||undefined});if(r.error)throw r.error;const {data,error}=await db.from('application_attachments').insert({application_id:applicationId,uploaded_by:u.id,file_name:file.name,file_path:path,file_type:file.type||null,file_size:file.size}).select().single();if(error){await db.storage.from('application-attachments').remove([path]);throw error}return data}async function deleteAttachment(id,path){const db=await getSupabase();const {error}=await db.from('application_attachments').delete().eq('id',id);if(error)throw error;if(path)await db.storage.from('application-attachments').remove([path])}async function attachmentUrl(path){if(!path)throw Error('У вложения отсутствует путь.');const db=await getSupabase();const {data,error}=await db.storage.from('application-attachments').createSignedUrl(path,600);if(error)throw new Error('Не удалось открыть файл: '+error.message);return data.signedUrl}async function listCitizensAdmin(){const {data,error}=await(await getSupabase()).rpc('admin_list_citizens');if(error)throw error;return data||[]}window.ZB={getSupabase,currentSession,currentUser,currentProfile,requireAuth,requireCitizen,requireAdmin,signOut,signIn,validGameDay,submitApplication,listMyApplications,listApplicationsAdmin,getApplication,getApplicationAdmin,getHistory,adminReceive,adminStartReview,adminDecision,decideApplication,createAppeal,listAppealsAdmin,resolveAppealAdmin,listMessages,sendMessage,markApplicationMessagesRead,getUnreadMessageCount,deleteOwnMessage,deleteApplication,deleteMessage,clearHistory,clearMessages,listAttachments,uploadAttachment,deleteAttachment,attachmentUrl,listCitizensAdmin};
+const SUPABASE_CDN = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+let sbPromise = null;
+
+async function getSupabase() {
+  if (sbPromise) return sbPromise;
+  sbPromise = new Promise((resolve, reject) => {
+    const finish = () => {
+      try {
+        const config = window.ZAYAVLENIYA_SUPABASE || {};
+        if (!config.url || !config.anonKey) {
+          reject(new Error('SUPABASE_CONFIG_MISSING'));
+          return;
+        }
+        if (!window.supabase || typeof window.supabase.createClient !== 'function') {
+          reject(new Error('SUPABASE_CLIENT_MISSING'));
+          return;
+        }
+        resolve(window.supabase.createClient(config.url, config.anonKey, {
+          auth: {
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: true,
+            flowType: 'pkce'
+          }
+        }));
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    if (window.supabase) {
+      finish();
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = SUPABASE_CDN;
+    script.async = true;
+    script.onload = finish;
+    script.onerror = () => reject(new Error('SUPABASE_CDN_ERROR'));
+    document.head.appendChild(script);
+  });
+  return sbPromise;
+}
+
+async function currentSession() {
+  const db = await getSupabase();
+  const result = await db.auth.getSession();
+  if (result.error) throw result.error;
+  return result.data.session || null;
+}
+
+async function currentUser() {
+  const session = await currentSession();
+  return session ? session.user : null;
+}
+
+async function currentProfile() {
+  const user = await currentUser();
+  if (!user) return null;
+  const db = await getSupabase();
+  const result = await db.from('profiles').select('*').eq('id', user.id).maybeSingle();
+  if (result.error) throw result.error;
+  return result.data;
+}
+
+async function requireAuth() {
+  const session = await currentSession();
+  if (!session) {
+    location.replace('login.html');
+    return null;
+  }
+  return session.user;
+}
+
+async function requireCitizen() {
+  const user = await requireAuth();
+  if (!user) return null;
+  const profile = await currentProfile();
+  if (!profile) {
+    await signOut();
+    return null;
+  }
+  if (profile.role === 'admin') {
+    location.replace('admin.html');
+    return null;
+  }
+  return profile;
+}
+
+async function requireAdmin() {
+  const user = await requireAuth();
+  if (!user) return null;
+  const profile = await currentProfile();
+  if (!profile) {
+    await signOut();
+    return null;
+  }
+  if (profile.role !== 'admin') {
+    location.replace('dashboard.html');
+    return null;
+  }
+  return profile;
+}
+
+async function signOut() {
+  const db = await getSupabase();
+  await db.auth.signOut({ scope: 'local' });
+  location.replace('login.html');
+}
+
+async function signIn(email, password) {
+  const db = await getSupabase();
+  return db.auth.signInWithPassword({ email, password });
+}
+
+function validGameDay(value) {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 0) {
+    throw new Error('Игровой день должен быть целым числом от 0 и выше.');
+  }
+  return number;
+}
+
+async function submitApplication(type, title, destination, formData, documentText, gameDay) {
+  const db = await getSupabase();
+  const result = await db.rpc('submit_application', {
+    p_type: type,
+    p_title: title,
+    p_destination: destination,
+    p_form_data: formData || {},
+    p_generated_document: documentText || '',
+    p_game_day: validGameDay(gameDay)
+  });
+  if (result.error) throw result.error;
+  return result.data;
+}
+
+async function listMyApplications() {
+  const user = await currentUser();
+  if (!user) throw new Error('Требуется вход.');
+  const db = await getSupabase();
+  const result = await db.from('applications').select('*').eq('citizen_id', user.id).order('created_at', { ascending: false });
+  if (result.error) throw result.error;
+  return result.data || [];
+}
+
+async function listApplicationsAdmin() {
+  const db = await getSupabase();
+  const result = await db.from('applications').select('*, profiles:citizen_id(id,full_name,passport_series,passport_number,birth_date,citizenship,birth_place,nationality,residence_address,registration_address,passport_issuer,passport_issue_date)').order('created_at', { ascending: false });
+  if (result.error) throw result.error;
+  return result.data || [];
+}
+
+async function getApplication(id) {
+  if (!id) throw new Error('Не указан номер заявления.');
+  const user = await currentUser();
+  if (!user) throw new Error('Требуется вход.');
+  const db = await getSupabase();
+  const result = await db.from('applications').select('*, profiles:citizen_id(*)').eq('id', id).eq('citizen_id', user.id).single();
+  if (result.error) throw result.error;
+  return result.data;
+}
+
+async function getApplicationAdmin(id) {
+  if (!id) throw new Error('Не указан номер заявления.');
+  const profile = await currentProfile();
+  if (!profile || profile.role !== 'admin') throw new Error('Доступ администратора требуется.');
+  const db = await getSupabase();
+  const result = await db.from('applications').select('*, profiles:citizen_id(*)').eq('id', id).single();
+  if (result.error) throw result.error;
+  return result.data;
+}
+
+async function getHistory(id) {
+  const db = await getSupabase();
+  const result = await db.from('application_history').select('*').eq('application_id', id).order('created_at', { ascending: true });
+  if (result.error) throw result.error;
+  return result.data || [];
+}
+
+async function rpc(name, args) {
+  const db = await getSupabase();
+  const result = await db.rpc(name, args || {});
+  if (result.error) throw result.error;
+  return result.data;
+}
+
+async function adminReceive(id, gameDay) {
+  return rpc('receive_application', { p_application_id: id, p_game_day: validGameDay(gameDay) });
+}
+
+async function adminStartReview(id, gameDay) {
+  return rpc('start_application_review', { p_application_id: id, p_game_day: validGameDay(gameDay) });
+}
+
+async function adminDecision(id, status, comment, gameDay) {
+  return rpc('application_decision', {
+    p_application_id: id,
+    p_status: status,
+    p_comment: comment || '',
+    p_game_day: validGameDay(gameDay)
+  });
+}
+
+async function decideApplication(id, status, gameDay, comment) {
+  return adminDecision(id, status, comment, gameDay);
+}
+
+async function createAppeal(id, reason) {
+  const text = String(reason || '').trim();
+  if (text.length < 10) throw new Error('Причина оспаривания должна содержать минимум 10 символов.');
+  const db = await getSupabase();
+  const result = await db.rpc('create_appeal', { p_application_id: id, p_reason: text });
+  if (result.error) throw result.error;
+  return result.data;
+}
+
+async function listAppealsAdmin() {
+  return (await rpc('list_appeals_admin')) || [];
+}
+
+async function resolveAppealAdmin(id, status, comment, gameDay) {
+  return rpc('resolve_appeal_admin', {
+    p_appeal_id: id,
+    p_status: status,
+    p_comment: comment || '',
+    p_game_day: validGameDay(gameDay)
+  });
+}
+
+async function listMessages(id) {
+  return (await rpc('list_application_messages', { p_application_id: id })) || [];
+}
+
+async function sendMessage(id, message) {
+  const text = String(message || '').trim();
+  if (!text) throw new Error('Сообщение не может быть пустым.');
+  if (text.length > 4000) throw new Error('Сообщение слишком длинное.');
+  return rpc('send_application_message', { p_application_id: id, p_message: text });
+}
+
+async function markApplicationMessagesRead(id) {
+  if (!id) return null;
+  return rpc('mark_application_messages_read', { p_application_id: id });
+}
+
+async function getUnreadMessageCount() {
+  const user = await currentUser();
+  if (!user) return 0;
+  const db = await getSupabase();
+  const result = await db.from('messages').select('id', { count: 'exact', head: true }).eq('recipient_id', user.id).eq('is_read', false);
+  if (result.error) throw result.error;
+  return result.count || 0;
+}
+
+async function deleteOwnMessage(id) {
+  return rpc('delete_own_message', { p_message_id: id });
+}
+
+async function deleteApplication(id) {
+  return rpc('delete_application_admin', { p_application_id: id });
+}
+
+async function deleteMessage(id) {
+  return rpc('delete_message_admin', { p_message_id: id });
+}
+
+async function clearHistory(id) {
+  return rpc('clear_application_history_admin', { p_application_id: id });
+}
+
+async function clearMessages(id) {
+  return rpc('clear_application_messages_admin', { p_application_id: id });
+}
+
+async function listAttachments(id) {
+  const db = await getSupabase();
+  const result = await db.from('application_attachments').select('*').eq('application_id', id).order('created_at', { ascending: true });
+  if (result.error) throw result.error;
+  return result.data || [];
+}
+
+async function uploadAttachment(applicationId, file) {
+  if (!file) throw new Error('Файл не выбран.');
+  const user = await currentUser();
+  if (!user) throw new Error('Требуется вход.');
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-а-яА-ЯёЁ]/g, '_');
+  const path = user.id + '/' + applicationId + '/' + Date.now() + '_' + safeName;
+  const db = await getSupabase();
+  const upload = await db.storage.from('application-attachments').upload(path, file, { upsert: false, contentType: file.type || undefined });
+  if (upload.error) throw upload.error;
+  const inserted = await db.from('application_attachments').insert({
+    application_id: applicationId,
+    uploaded_by: user.id,
+    file_name: file.name,
+    file_path: path,
+    file_type: file.type || null,
+    file_size: file.size
+  }).select().single();
+  if (inserted.error) {
+    await db.storage.from('application-attachments').remove([path]);
+    throw inserted.error;
+  }
+  return inserted.data;
+}
+
+async function deleteAttachment(id, path) {
+  const db = await getSupabase();
+  const result = await db.from('application_attachments').delete().eq('id', id);
+  if (result.error) throw result.error;
+  if (path) await db.storage.from('application-attachments').remove([path]);
+}
+
+async function attachmentUrl(path) {
+  if (!path) throw new Error('У вложения отсутствует путь.');
+  const db = await getSupabase();
+  const result = await db.storage.from('application-attachments').createSignedUrl(path, 600);
+  if (result.error) throw new Error('Не удалось открыть файл: ' + result.error.message);
+  return result.data.signedUrl;
+}
+
+async function listCitizensAdmin() {
+  return (await rpc('admin_list_citizens')) || [];
+}
+
+window.ZB = {
+  getSupabase,
+  currentSession,
+  currentUser,
+  currentProfile,
+  requireAuth,
+  requireCitizen,
+  requireAdmin,
+  signOut,
+  signIn,
+  validGameDay,
+  submitApplication,
+  listMyApplications,
+  listApplicationsAdmin,
+  getApplication,
+  getApplicationAdmin,
+  getHistory,
+  adminReceive,
+  adminStartReview,
+  adminDecision,
+  decideApplication,
+  createAppeal,
+  listAppealsAdmin,
+  resolveAppealAdmin,
+  listMessages,
+  sendMessage,
+  markApplicationMessagesRead,
+  getUnreadMessageCount,
+  deleteOwnMessage,
+  deleteApplication,
+  deleteMessage,
+  clearHistory,
+  clearMessages,
+  listAttachments,
+  uploadAttachment,
+  deleteAttachment,
+  attachmentUrl,
+  listCitizensAdmin
+};
